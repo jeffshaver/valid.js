@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <title>valid.js demo</title>
+</head>
+<body>
+<form data-valid-form>
+  <input data-valid-test class="test">
+</form>
+<script src="../src/valid.js"></script>
+<script>
+  'use strict';
+  valid.addValidationMethod('testCheck', '[data-valid-test]', function(attributeValue, value) {
+    return parseInt(value) > 1;
+  });
+  valid.init({
+    validFieldClass: 'valid-field',
+    validFormClass: 'valid-form',
+    onFormValidityChange: function(valid) {
+      console.log('form is ', (valid ? '' : 'not'), 'valid');
+    },
+    onFieldValidityChange: function(valid) {
+      console.log('field is ', (valid ? '' : 'not'), 'valid');
+    },
+    onInit: function() {
+      console.log('init');
+    },
+    onRefresh: function() {
+      console.log('refresh');
+    }
+});
+</script>
+</body>
+</html>
