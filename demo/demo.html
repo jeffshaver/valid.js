@@ -2,31 +2,42 @@
 <html>
 <head>
   <title>valid.js demo</title>
+  <style>
+    .valid-field, .valid-form {
+      border: 2px solid green;
+    }
+    .invalid-field {
+      border: 2px solid red;
+    }
+  </style>
 </head>
 <body>
 <form data-valid-form>
-  <input data-valid-test class="test">
+  <select data-valid-length=">0">
+    <option></option>
+    <option>Opt1</option>
+    <option>Opt2</option>
+  </select>
 </form>
 <script src="../src/valid.js"></script>
 <script>
   'use strict';
-  valid.addValidationMethod('testCheck', '[data-valid-test]', function(attributeValue, value) {
-    return parseInt(value) > 1;
-  });
   valid.init({
     validFieldClass: 'valid-field',
+    invalidFieldClass: 'invalid-field',
     validFormClass: 'valid-form',
+    invalidFormClass: 'invalid-form',
     onFormValidityChange: function(valid) {
       console.log('form is ', (valid ? '' : 'not'), 'valid');
     },
     onFieldValidityChange: function(valid) {
       console.log('field is ', (valid ? '' : 'not'), 'valid');
     },
-    onInit: function() {
-      console.log('init');
+    onInit: function(forms, settings) {
+      console.log(this, forms, settings);
     },
-    onRefresh: function() {
-      console.log('refresh');
+    onRefresh: function(forms, settings) {
+      console.log(this, forms, settings);
     }
 });
 </script>

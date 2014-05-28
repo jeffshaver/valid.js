@@ -29,7 +29,10 @@
       events: ['keyup', 'change'],
       defaultDateFormat: 'mm/dd/yyyy',
       validFieldClass: 'valid-field',
-      validFormClass: 'valid-form'
+      invalidFieldClass: 'invalid-field',
+      validFormClass: 'valid-form',
+      invalidFormClass: 'invalid-form',
+      keyUpDelay: 200
     };
     var options = {};
     var selectors = [
@@ -40,7 +43,26 @@
       '[data-valid-dateAfter]'
     ];
     var elementSelector = selectors.join(', ');
+    var typeToMethodCombos = {
+      emptyCheck: ['text', 'radio', 'checkbox', 'select'],
+      lengthCheck: ['text', 'checkbox', 'select'],
+      dateCheck: ['text'],
+      dateBeforeCheck: ['text'],
+      dateAfterCheck: ['text']
+    };
+    var keyUpTimer;
     var initialized;
+
+    /*
+     * Helper methods
+     */
+    var slice = function() {
+      return Array.prototype.slice.apply(arguments[0], Array.prototype.slice.call(arguments, 1));
+    };
+    var splice = function() {
+      Array.prototype.splice.apply(arguments[0], slice(arguments, 1));
+      return arguments[0];
+    };
 
     var toggleClass = function(element, classNames) {
       var classes = element.className;
@@ -60,22 +82,105 @@
       element.className = classes;
     };
 
+    var addClass = function(element, classNames) {
+      var classes = element.className;
+      var classRegex, i, className;
+      if (getVarType('classNames') !== 'Array') {
+        classNames = classNames.split(' ');
+      }
+      for (i = 0; i < classNames.length; i++) {
+        className = classNames[i];
+        classRegex = new RegExp('(^|\\s)' + className + '($|\\s)');
+        if (!classRegex.test(classes)) {
+          classes += classes !== '' ? ' ' + className : className;
+        }
+      }
+      element.className = classes;
+    };
+
+    var removeClass = function(element, classNames) {
+      var classes = element.className;
+      var classRegex, i, className;
+      if (getVarType(classNames) !== 'Array') {
+        classNames = classNames.split(' ');
+      }
+      for (i = 0; i < classNames.length; i++) {
+        className = classNames[i];
+        classRegex = new RegExp('(^|\\s)' + className + '($|\\s)');
+        if (classRegex.test(classes)) {
+          classes = classes.replace(classRegex, '');
+        }
+      }
+      element.className = classes;
+    };
+
+    var markField = function(isValid, formObject, elementObject, ignoreEvents) {
+      var target = elementObject.element;
+      if (getVarType(isValid) !== 'Boolean') {
+        console.error(isValid + ' is not a valid value for the isValid variable.');
+        return false;
+      }
+      if (isValid) {
+        putInValid(formObject, target);
+        if (options.onFieldValid && !ignoreEvents) {
+          options.onFieldValid.call(target);
+        }
+
+      } else {
+        putInInvalid(formObject, target);
+        if (options.onFieldInvalid && !ignoreEvents) {
+          options.onFieldInvalid.call(target);
+        }
+      }
+      if (options.onFieldValidityChange && !ignoreEvents) {
+        options.onFieldValidityChange.call(target, isValid);
+      }
+      elementObject.isValid = isValid;
+      addClass(target, options[(isValid === true ? 'valid' : 'invalid') + 'FieldClass']);
+      removeClass(target, options[(isValid === true ? 'invalid' : 'valid') + 'FieldClass']);
+    };
+    
+    var markForm = function(isValid, formObject) {
+      var target = formObject.form;
+      if (getVarType(isValid) !== 'Boolean') {
+        console.error(isValid + ' is not a valid value for the isValid variable.');
+        return false;
+      }
+      if (options.onFormValid) {
+        options.onFormValid.call(target);
+      }
+      if (options.onFormValidityChange) {
+        options.onFormValidityChange.call(target, isValid);
+      }
+      formObject.isValid = isValid;
+      addClass(target, options[(isValid === true ? 'valid' : 'invalid') + 'FormClass']);
+      removeClass(target, options[(isValid === true ? 'invalid' : 'valid') + 'FormClass']);
+    };
+
+    var markRelatedElements = function(isValid, formObject, relatedElements) {
+      var relatedElementObject, i;
+      for (i = 0; i < relatedElements.length; i++) {
+        relatedElementObject = findElementObjectByFormAndElement(formObject.form, relatedElements[i]);
+        markField(isValid, formObject, relatedElementObject, true);
+      }
+    };
+
     /*
      * Types of validation:
-     *   empty
-     *   length
-     *   date
-     *   date + greater than
-     *   date + less than
-     *   radio checked
-     *   checkbox checked
-     *   select checked
+     *   empty - Done
+     *   length - Done
+     *   date - Done
+     *   date + greater than - Done
+     *   date + less than - Done
+     *   radio checked - Done
+     *   checkbox checked - Done
+     *   select checked - Done
      */
 
     var getFormElementsByForm = function(form) {
       var els = [];
       var formElements = form.querySelectorAll(elementSelector);
-      var i, j, e, attributeName, attribute, checkName, elementObject;
+      var i, j, e, attributeName, attribute, checkName, elementObject, relatedElements;
       for (i = 0; i < formElements.length; i++) {
         e = formElements[i];
         elementObject = {
@@ -87,12 +192,21 @@
           isSelect: e.tagName === 'SELECT',
           isValid: null
         };
+        if (elementObject.isCheckbox || elementObject.isRadio) {
+          relatedElements = slice(form.querySelectorAll('[name="'+e.getAttribute('name')+'"]'), 0);
+          elementObject.relatedElements = splice(relatedElements, relatedElements.indexOf(e), 1);
+        }
         for (j = 0; j < methods.length; j++) {
           attributeName = methods[j].selector;
           checkName = methods[j].checkName;
           attribute = e.getAttribute(attributeName);
           if (attribute === '') {
             attribute = true;
+          }
+          if (attribute && typeToMethodCombos[checkName].indexOf(!elementObject.isSelect ? e.type : e.tagName.toLowerCase()) === -1) {
+            console.error('A ' + checkName + ' cannot be applied to a(n) ' +
+              (!elementObject.isSelect ? e.type : e.tagName.toLowerCase()) + ' element. Skipping element');
+            continue;
           }
           elementObject[checkName] = attribute !== null ? attribute : false;
         }
@@ -111,24 +225,52 @@
       return !value || value.length === 0;
     };
 
-    var validateEmpty = function() {
-      return !isEmptyValue(this.value);
+    var validateEmpty = function(elementObject, formObject) {
+      var element = this;
+      var isValid = element.checked;
+      var i;
+      if (!elementObject.isCheckbox && !elementObject.isRadio) {
+        return !isEmptyValue(element.value);
+      }
+      if (!isValid) {
+        for (i = 0; i < elementObject.relatedElements.length; i++) {
+          if (elementObject.relatedElements[i].checked === true) {
+            isValid = true;
+            break;
+          }
+        }
+      }
+      return isValid;
     };
 
     var validateLengthExpression = function(lengthExpression) {
       return lengthExpressionRegEx.test(lengthExpression);
     };
 
-    var validateLength = function(lengthExpression) {
-      console.log(this, this.value, lengthExpression);
-      return validateLengthExpression(lengthExpression) && 
-              (new Function('return ' + this.value.length + lengthExpression)());
+    var validateLength = function(elementObject, formObject, lengthExpression) {
+      var element = this;
+      var checkedElements = [];
+      var i;
+      if (!elementObject.isCheckbox && !elementObject.isRadio) {
+        return validateLengthExpression(lengthExpression) &&
+                (new Function('return ' + (!elementObject.isSelect ? element.value.length : element.selectedOptions.length) + lengthExpression)());
+      }
+      if (element.checked) {
+        checkedElements.push(element);
+      }
+      for (i = 0; i < elementObject.relatedElements.length; i++) {
+        if (elementObject.relatedElements[i].checked) {
+          checkedElements.push(elementObject.relatedElements[i]);
+        }
+      }
+      return validateLengthExpression(lengthExpression) &&
+              (new Function('return ' + checkedElements.length + lengthExpression)());
     };
 
-    var validateDate = function (userFormat) {
+    var validateDate = function (elementObject, formObject, userFormat) {
       var value = this.value;
       var delimiter, format, date, m, d, y, i;
-      userFormat = userFormat !== true ? userFormat : options.defaultDateFormat;
+      userFormat = userFormat && userFormat !== true ? userFormat : options.defaultDateFormat;
       delimiter = /[^mdy]/.exec(userFormat)[0];
       format = userFormat.split(delimiter);
       date = value.split(delimiter);
@@ -149,6 +291,30 @@
         y && y.length === 4 &&
         d > 0 && d <= (new Date(y, m, 0)).getDate()
       );
+    };
+
+    var validateDateAfter = function(elementObject, formObject, after) {
+      var element = document.getElementById(after);
+      var value = element ? element.value : after;
+      if (!validateDate.call(this) || !validateDate.call(element)) {
+        return false;
+      }
+      if (new Date(this.value) - new Date(value) > 0) {
+        return true;
+      }
+      return false;
+    };
+
+    var validateDateBefore = function(elementObject, formObject, after) {
+      var element = document.getElementById(after);
+      var value = element ? element.value : after;
+      if (!validateDate.call(this) || !validateDate.call(element)) {
+        return false;
+      }
+      if (new Date(value) - new Date(this.value) > 0) {
+        return true;
+      }
+      return false;
     };
 
     var putInValid = function(formObject, field) {
@@ -194,7 +360,17 @@
       if (!form) {
         return null;
       }
+    };
 
+    var findElementObjectByFormAndElement = function(form, element) {
+      var elementObjects = findFormObjectByForm(form).elements;
+      var i;
+      for (i = 0; i < elementObjects.length; i++) {
+        if (elementObjects[i].element === element) {
+          break;
+        }
+      }
+      return elementObjects[i];
     };
 
     var getVarType = function(v) {
@@ -275,27 +451,56 @@
       checkName: 'dateCheck',
       selector: 'data-valid-date',
       method: validateDate
+    },{
+      checkName: 'dateAfterCheck',
+      selector: 'data-valid-dateAfter',
+      method: validateDateAfter
+    },{
+      checkName: 'dateBeforeCheck',
+      selector: 'data-valid-dateBefore',
+      method: validateDateBefore
     }];
+
+    var handleFormReset = function(ev) {
+      var form = ev.target;
+      var formObject = findFormObjectByForm(form);
+      var elements = formObject.elements;
+      var i;
+      form.reset();
+      formObject.isValid = null;
+      removeClass(form, [options.validFormClass, options.invalidFormClass]);
+      for (i = 0; i < elements.length; i++) {
+        elements[i].isValid = null;
+        removeClass(elements[i].element, [options.validFieldClass, options.invalidFieldClass]);
+      }
+    };
+
+    var handleKeyUp = function(ev) {
+      clearTimeout(keyUpTimer);
+      keyUpTimer = setTimeout(function() {
+        handleChange.call(document, ev);
+      }, options.keyUpDelay);
+    };
 
     var handleChange = function(ev) {
       var target = ev.target;
       var valid = true;
-      var i, j, method, formObject, element, formValidity, fieldValidity;
+      var i, j, method, formObject, elementObject, formValidity, fieldValidity, e;
       for (i = 0; i < forms.length; i++) {
         for (j = 0; j < forms[i].elements.length; j++) {
           if (forms[i].elements[j].element === target) {
             formObject = forms[i];
-            element = forms[i].elements[j];
+            elementObject = forms[i].elements[j];
             formValidity = formObject.isValid;
-            fieldValidity = element.isValid;
+            fieldValidity = elementObject.isValid;
             break;
           }
         }
-        if (element) {
+        if (elementObject) {
           break;
         }
       }
-      if (!element) {
+      if (!elementObject) {
         return;
       }
       for (i = 0; i < methods.length; i++) {
@@ -303,56 +508,39 @@
           break;
         }
         method = methods[i];
-        if (!element[method.checkName]) {
-          continue;
+        if (elementObject[method.checkName]) {
+          valid = method.method.call(target, elementObject, formObject, elementObject[method.checkName]);
+          try {
+            e = document.querySelectorAll('[data-valid-dateAfter="'+target.id+'"], [data-valid-dateBefore="'+target.id+'"]');
+            for (j = 0; j < e.length; j++) {
+              if (!ev.stop) {
+                handleChange.call(document, {target: e[j], stop: true});
+              }
+            }
+          } catch (e) {}
         }
-        valid = method.method.call(target, element[method.checkName], target.value);
       }
-      if (valid && !element.isValid) {
-        putInValid(formObject, target);
-        if (options.onFieldValid) {
-          options.onFieldValid.call(target);
+      if (valid && !elementObject.isValid) {
+        markField(valid, formObject, elementObject);
+        if (elementObject.relatedElements) {
+          markRelatedElements(valid, formObject, elementObject.relatedElements);
         }
-        if (options.onFieldValidityChange) {
-          options.onFieldValidityChange.call(target, true);
-        }
-        element.isValid = true;
-        toggleClass(target, options.validFieldClass);
 
-      } else if (!valid && element.isValid) {
-        putInInvalid(formObject, target);
-        if (options.onFieldInvalid) {
-          options.onFieldInvalid.call(target);
+      } else if (!valid && elementObject.isValid) {
+        markField(valid, formObject, elementObject);
+        if (elementObject.relatedElements) {
+          markRelatedElements(valid, formObject, elementObject.relatedElements);
         }
-        if (options.onFieldValidityChange) {
-          options.onFieldValidityChange.call(target, false);
-        }
-        element.isValid = false;
-        toggleClass(target, options.validFieldClass);
       }
       if (formObject.validElements.length === formObject.elements.length && !formObject.isValid) {
-        if (options.onFormValid) {
-          options.onFormValid.call(formObject.form);
-        }
-        if (options.onFormValidityChange) {
-          options.onFormValidityChange.call(formObject.form, true);
-        }
-        formObject.isValid = true;
-        toggleClass(formObject.form, options.validFormClass);
+        markForm(true, formObject);
       } else if (formObject.validElements.length !== formObject.elements.length && formObject.isValid) {
-        if (options.onFormInvalid) {
-          options.onFormInvalid.call(formObject.form);
-        }
-        if (options.onFormValidityChange) {
-          options.onFormValidityChange.call(formObject.form, false);
-        }
-        formObject.isValid = false;
-        toggleClass(formObject.form, options.validFormClass);
+        markForm(false, formObject);
       }
     };
 
-    var valid = function() {};
-    valid.prototype = {
+    var Valid = function() {};
+    Valid.prototype = {
       init: function(opts) {
         if (!initialized) {
           var formElements = document.querySelectorAll('[data-valid-form]');
@@ -362,10 +550,15 @@
             forms.push(getFormElementsByForm(formElements[i]));
           }
           for (i = 0; i < options.events.length; i++) {
-            document.addEventListener(options.events[i], handleChange, false);
+            if (options.events[i] !== 'keyup') {
+              document.addEventListener(options.events[i], handleChange, false);
+            } else {
+              document.addEventListener(options.events[i], handleKeyUp, false);
+            }
           }
+          document.addEventListener('reset', handleFormReset, false);
           if (options.onInit) {
-            options.onInit();
+            options.onInit.call(this, forms, options);
           }
           return initialized = true;
         }
@@ -384,7 +577,7 @@
           forms.push(getFormElementsByForm(formElements[i]));
         }
         if (options.onRefresh) {
-          options.onRefresh();
+          options.onRefresh.call(this, forms, options);
         }
         return true;
       },
@@ -398,6 +591,6 @@
         });
       }
     };
-    return new valid();
+    return new Valid();
   };
 }(document))));
