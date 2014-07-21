@@ -24,7 +24,7 @@
   'use strict';
   return function() {
     var forms = [];
-    var lengthExpressionRegEx = /^>*<*=*\d+$/;
+    var lengthExpressionRegEx = /^[><=]+\d+$/;
     var defaults = {
       events: ['keyup', 'change'],
       defaultDateFormat: 'mm/dd/yyyy',
@@ -32,7 +32,8 @@
       invalidFieldClass: 'invalid-field',
       validFormClass: 'valid-form',
       invalidFormClass: 'invalid-form',
-      keyUpDelay: 200
+      keyUpDelay: 200,
+      emailRegex: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,4}$/i
     };
     var options = {};
     var selectors = [
@@ -40,15 +41,17 @@
       '[data-valid-length]',
       '[data-valid-date]',
       '[data-valid-dateBefore]',
-      '[data-valid-dateAfter]'
+      '[data-valid-dateAfter]',
+      '[data-valid-email]'
     ];
     var elementSelector = selectors.join(', ');
     var typeToMethodCombos = {
-      emptyCheck: ['text', 'radio', 'checkbox', 'select'],
-      lengthCheck: ['text', 'checkbox', 'select'],
+      emptyCheck: ['text', 'textarea', 'radio', 'checkbox', 'select'],
+      lengthCheck: ['text', 'textarea', 'checkbox', 'select'],
       dateCheck: ['text'],
       dateBeforeCheck: ['text'],
-      dateAfterCheck: ['text']
+      dateAfterCheck: ['text'],
+      emailCheck: ['text']
     };
     var keyUpTimer;
     var initialized;
@@ -186,6 +189,7 @@
         elementObject = {
           element: e,
           isText: e.type === 'text',
+          isTextarea: e.tagName === 'TEXTAREA',
           isCheckbox: e.type === 'checkbox',
           isRadio: e.type === 'radio',
           isDate: e.type === 'date',
@@ -203,7 +207,7 @@
           if (attribute === '') {
             attribute = true;
           }
-          if (attribute && typeToMethodCombos[checkName].indexOf(!elementObject.isSelect ? e.type : e.tagName.toLowerCase()) === -1) {
+          if (attribute && typeToMethodCombos[checkName].indexOf(!elementObject.isSelect && !elementObject.isTextarea ? e.type : e.tagName.toLowerCase()) === -1) {
             console.error('A ' + checkName + ' cannot be applied to a(n) ' +
               (!elementObject.isSelect ? e.type : e.tagName.toLowerCase()) + ' element. Skipping element');
             continue;
@@ -249,22 +253,28 @@
 
     var validateLength = function(elementObject, formObject, lengthExpression) {
       var element = this;
-      var checkedElements = [];
-      var i;
-      if (!elementObject.isCheckbox && !elementObject.isRadio) {
-        return validateLengthExpression(lengthExpression) &&
-                (new Function('return ' + (!elementObject.isSelect ? element.value.length : element.selectedOptions.length) + lengthExpression)());
+      var lengthExpressionSplit = /\|\||&&/;
+      var i, length, expressionString;
+      var expressions = lengthExpression.split(lengthExpressionSplit);
+      if (!expressions.reduce(function(pv, cv) { return pv && validateLengthExpression(cv); }, true)) {
+        return false;
       }
-      if (element.checked) {
-        checkedElements.push(element);
-      }
-      for (i = 0; i < elementObject.relatedElements.length; i++) {
-        if (elementObject.relatedElements[i].checked) {
-          checkedElements.push(elementObject.relatedElements[i]);
+      if (elementObject.isCheckbox || elementObject.isRadio) {
+        if (element.checked) {
+          length++;
         }
+        for (i = 0; i < elementObject.relatedElements.length; i++) {
+          if (elementObject.relatedElements[i].checked) {
+            length++;
+          }
+        }
+      } else {
+        length = (!elementObject.isSelect ? element.value.length : element.selectedOptions.length);
       }
-      return validateLengthExpression(lengthExpression) &&
-              (new Function('return ' + checkedElements.length + lengthExpression)());
+      expressionString = length + lengthExpression.replace(lengthExpressionSplit, function(m) {
+        return m + length;
+      });
+      return (new Function('return ' +  expressionString)());
     };
 
     var validateDate = function (elementObject, formObject, userFormat) {
@@ -315,6 +325,10 @@
         return true;
       }
       return false;
+    };
+
+    var validateEmail = function(elementObject, formObject) {
+      return options.emailRegex.test(this.value);
     };
 
     var putInValid = function(formObject, field) {
@@ -459,6 +473,10 @@
       checkName: 'dateBeforeCheck',
       selector: 'data-valid-dateBefore',
       method: validateDateBefore
+    },{
+      checkName: 'emailCheck',
+      selector: 'data-valid-email',
+      method: validateEmail
     }];
 
     var handleFormReset = function(ev) {
@@ -468,6 +486,9 @@
       var i;
       form.reset();
       formObject.isValid = null;
+      if (options.onFormValidityChange) {
+        options.onFormValidityChange.call(form, false);
+      }
       removeClass(form, [options.validFormClass, options.invalidFormClass]);
       for (i = 0; i < elements.length; i++) {
         elements[i].isValid = null;
